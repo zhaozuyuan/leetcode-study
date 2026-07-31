@@ -3,12 +3,14 @@ import argparse
 import json
 import random
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Set
 
 
-DEFAULT_SOLUTION_ROOT = Path.home() / "Work/algorithm/leetcode/solution"
+# solution 是仓库根目录下的 submodule；doocs/leetcode 的题目在子模块内的 solution/ 子目录下
+SOLUTION_ROOT = Path(__file__).resolve().parents[1] / "solution" / "solution"
 DEFAULT_HISTORY = Path.home() / ".config/leetcode-study/history.json"
 
 DIFFICULTY_ALIASES = {
@@ -84,6 +86,39 @@ def read_text_robust(path: Path) -> str:
         return best_text
     # 3) 全部失败：latin-1 无损兜底（不再静默丢字节）
     return raw.decode("latin-1")
+
+
+def ensure_solution_updated(solution_root: Path) -> None:
+    """拉取前先判断：solution 子模块落后于远程才更新；离线等失败场景静默降级"""
+    if not (solution_root / ".git").exists():
+        return
+    try:
+        subprocess.run(
+            ["git", "-C", str(solution_root), "fetch", "--quiet"],
+            check=True, capture_output=True, timeout=30,
+        )
+        local = subprocess.check_output(
+            ["git", "-C", str(solution_root), "rev-parse", "HEAD"], timeout=10,
+        )
+        remote = subprocess.check_output(
+            ["git", "-C", str(solution_root), "rev-parse", "FETCH_HEAD"], timeout=10,
+        )
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return
+    if local == remote:
+        return
+    try:
+        # 子模块默认 detached HEAD，先切到跟踪分支再 ff 拉取，避免丢弃本地改动
+        subprocess.run(
+            ["git", "-C", str(solution_root), "checkout", "main"],
+            check=True, capture_output=True, timeout=30,
+        )
+        subprocess.run(
+            ["git", "-C", str(solution_root), "pull", "--ff-only", "--quiet"],
+            check=True, capture_output=True, timeout=60,
+        )
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return
 
 
 def load_history(path: Path) -> Set[str]:
@@ -202,7 +237,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="随机推荐一道未练习 LeetCode 算法题")
     parser.parse_args()
 
-    solution_root = DEFAULT_SOLUTION_ROOT.expanduser()
+    ensure_solution_updated(SOLUTION_ROOT)
+    solution_root = SOLUTION_ROOT
     history = DEFAULT_HISTORY.expanduser()
 
     if not solution_root.exists():

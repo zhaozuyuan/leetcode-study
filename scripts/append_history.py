@@ -2,13 +2,15 @@
 import argparse
 import json
 import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
 
 DEFAULT_HISTORY = Path.home() / ".config/leetcode-study/history.json"
-DEFAULT_SOLUTION_ROOT = Path.home() / "Work/algorithm/leetcode/solution"
+# solution 是仓库根目录下的 submodule；doocs/leetcode 的题目在子模块内的 solution/ 子目录下
+SOLUTION_ROOT = Path(__file__).resolve().parents[1] / "solution" / "solution"
 REQUIRED_FIELDS = {
     "title": str,
     "path": str,
@@ -77,6 +79,39 @@ def read_text_robust(path: Path) -> str:
     return raw.decode("latin-1")
 
 
+def ensure_solution_updated(solution_root: Path) -> None:
+    """\u62c9\u53d6\u524d\u5148\u5224\u65ad\uff1asolution \u5b50\u6a21\u5757\u843d\u540e\u4e8e\u8fdc\u7a0b\u624d\u66f4\u65b0\uff1b\u79bb\u7ebf\u7b49\u5931\u8d25\u573a\u666f\u9759\u9ed8\u964d\u7ea7"""
+    if not (solution_root / ".git").exists():
+        return
+    try:
+        subprocess.run(
+            ["git", "-C", str(solution_root), "fetch", "--quiet"],
+            check=True, capture_output=True, timeout=30,
+        )
+        local = subprocess.check_output(
+            ["git", "-C", str(solution_root), "rev-parse", "HEAD"], timeout=10,
+        )
+        remote = subprocess.check_output(
+            ["git", "-C", str(solution_root), "rev-parse", "FETCH_HEAD"], timeout=10,
+        )
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return
+    if local == remote:
+        return
+    try:
+        # \u5b50\u6a21\u5757\u9ed8\u8ba4 detached HEAD\uff0c\u5148\u5207\u5230\u8ddf\u8e2a\u5206\u652f\u518d ff \u62c9\u53d6\uff0c\u907f\u514d\u4e22\u5f03\u672c\u5730\u6539\u52a8
+        subprocess.run(
+            ["git", "-C", str(solution_root), "checkout", "main"],
+            check=True, capture_output=True, timeout=30,
+        )
+        subprocess.run(
+            ["git", "-C", str(solution_root), "pull", "--ff-only", "--quiet"],
+            check=True, capture_output=True, timeout=60,
+        )
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired):
+        return
+
+
 def validate_entry(item: Any) -> None:
     if not isinstance(item, dict):
         raise ValueError("history.json entries must be objects")
@@ -115,7 +150,7 @@ def resolve_problem_dir(problem_path: Path) -> Path:
     problem_dir = problem_path.expanduser().resolve()
     if not problem_dir.is_dir():
         raise ValueError("problem path must be a directory: {}".format(problem_dir))
-    solution_root = DEFAULT_SOLUTION_ROOT.expanduser().resolve()
+    solution_root = SOLUTION_ROOT.resolve()
     try:
         problem_dir.relative_to(solution_root)
     except ValueError as exc:
@@ -154,6 +189,7 @@ def main() -> int:
     parser.add_argument("problem_path", type=Path)
     args = parser.parse_args()
 
+    ensure_solution_updated(SOLUTION_ROOT)
     history_path = DEFAULT_HISTORY.expanduser()
     data = load_history(history_path)
     data.append(build_entry(args.problem_path))

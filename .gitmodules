@@ -1,0 +1,3 @@
+[submodule "solution"]
+	path = solution
+	url = git@github.com:doocs/leetcode.git
