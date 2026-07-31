@@ -79,11 +79,28 @@ def read_text_robust(path: Path) -> str:
     return raw.decode("latin-1")
 
 
+def submodule_url() -> str:
+    """\u4ece\u4ed3\u5e93\u6839\u76ee\u5f55 .gitmodules \u8bfb\u53d6 solution \u5b50\u6a21\u5757\u7684\u8fdc\u7a0b\u5730\u5740"""
+    parent_root = Path(__file__).resolve().parents[1]
+    out = subprocess.check_output(
+        ["git", "config", "-f", str(parent_root / ".gitmodules"), "submodule.solution.url"],
+        timeout=10,
+    )
+    return out.decode().strip()
+
+
 def ensure_solution_updated(solution_root: Path) -> None:
-    """\u62c9\u53d6\u524d\u5148\u5224\u65ad\uff1asolution \u5b50\u6a21\u5757\u843d\u540e\u4e8e\u8fdc\u7a0b\u624d\u66f4\u65b0\uff1b\u79bb\u7ebf\u7b49\u5931\u8d25\u573a\u666f\u9759\u9ed8\u964d\u7ea7"""
-    if not (solution_root / ".git").exists():
-        return
+    """\u62c9\u53d6\u524d\u5148\u5224\u65ad\uff1asolution \u5b50\u6a21\u5757\u7f3a\u5931 .git\uff0c\u6216\u843d\u540e\u8fdc\u7a0b\u8d85\u8fc7 30 \u4e2a commit \u65f6\uff0c\u4ee5\u6d45\u514b\u9686\u65b9\u5f0f\u62c9\u53d6\u6700\u65b0\uff1b\u5931\u8d25\u9759\u9ed8\u964d\u7ea7"""
     try:
+        if not (solution_root / ".git").exists():
+            # \u5b50\u6a21\u5757\u4e0d\u5b58\u5728\uff1a\u6d45\u514b\u9686\uff08depth=1\uff09\u6700\u65b0\u4ee3\u7801
+            solution_root.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--single-branch", "--branch", "main",
+                 submodule_url(), str(solution_root)],
+                check=True, capture_output=True, timeout=300,
+            )
+            return
         subprocess.run(
             ["git", "-C", str(solution_root), "fetch", "--quiet"],
             check=True, capture_output=True, timeout=30,
@@ -99,7 +116,25 @@ def ensure_solution_updated(solution_root: Path) -> None:
     if local == remote:
         return
     try:
-        # \u5b50\u6a21\u5757\u9ed8\u8ba4 detached HEAD\uff0c\u5148\u5207\u5230\u8ddf\u8e2a\u5206\u652f\u518d ff \u62c9\u53d6\uff0c\u907f\u514d\u4e22\u5f03\u672c\u5730\u6539\u52a8
+        # \u843d\u540e\u8d85\u8fc7 30 \u4e2a commit\uff1a\u7528\u6d45\u62c9\u53d6\uff08depth=1\uff09+ reset \u76f4\u63a5\u8df3\u5230\u8fdc\u7a0b\u6700\u65b0\uff0c\u907f\u514d\u5386\u53f2\u8d8a\u79ef\u8d8a\u6df1
+        behind = int(subprocess.check_output(
+            ["git", "-C", str(solution_root), "rev-list", "--count", "HEAD..FETCH_HEAD"],
+            timeout=10,
+        ).decode().strip())
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired, ValueError):
+        return
+    try:
+        if behind > 30:
+            subprocess.run(
+                ["git", "-C", str(solution_root), "fetch", "--depth", "1", "origin", "main"],
+                check=True, capture_output=True, timeout=60,
+            )
+            subprocess.run(
+                ["git", "-C", str(solution_root), "reset", "--hard", "FETCH_HEAD"],
+                check=True, capture_output=True, timeout=30,
+            )
+            return
+        # \u843d\u540e\u4e0d\u591a\uff1a\u5b50\u6a21\u5757\u9ed8\u8ba4 detached HEAD\uff0c\u5148\u5207\u5230\u8ddf\u8e2a\u5206\u652f\u518d ff \u62c9\u53d6\uff0c\u907f\u514d\u4e22\u5f03\u672c\u5730\u6539\u52a8
         subprocess.run(
             ["git", "-C", str(solution_root), "checkout", "main"],
             check=True, capture_output=True, timeout=30,

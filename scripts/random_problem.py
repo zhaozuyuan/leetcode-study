@@ -88,11 +88,28 @@ def read_text_robust(path: Path) -> str:
     return raw.decode("latin-1")
 
 
+def submodule_url() -> str:
+    """从仓库根目录 .gitmodules 读取 solution 子模块的远程地址"""
+    parent_root = Path(__file__).resolve().parents[1]
+    out = subprocess.check_output(
+        ["git", "config", "-f", str(parent_root / ".gitmodules"), "submodule.solution.url"],
+        timeout=10,
+    )
+    return out.decode().strip()
+
+
 def ensure_solution_updated(solution_root: Path) -> None:
-    """拉取前先判断：solution 子模块落后于远程才更新；离线等失败场景静默降级"""
-    if not (solution_root / ".git").exists():
-        return
+    """拉取前先判断：solution 子模块缺失 .git，或落后远程超过 30 个 commit 时，以浅克隆方式拉取最新；失败静默降级"""
     try:
+        if not (solution_root / ".git").exists():
+            # 子模块不存在：浅克隆（depth=1）最新代码
+            solution_root.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["git", "clone", "--depth", "1", "--single-branch", "--branch", "main",
+                 submodule_url(), str(solution_root)],
+                check=True, capture_output=True, timeout=300,
+            )
+            return
         subprocess.run(
             ["git", "-C", str(solution_root), "fetch", "--quiet"],
             check=True, capture_output=True, timeout=30,
@@ -108,7 +125,25 @@ def ensure_solution_updated(solution_root: Path) -> None:
     if local == remote:
         return
     try:
-        # 子模块默认 detached HEAD，先切到跟踪分支再 ff 拉取，避免丢弃本地改动
+        # 落后超过 30 个 commit：用浅拉取（depth=1）+ reset 直接跳到远程最新，避免历史越积越深
+        behind = int(subprocess.check_output(
+            ["git", "-C", str(solution_root), "rev-list", "--count", "HEAD..FETCH_HEAD"],
+            timeout=10,
+        ).decode().strip())
+    except (subprocess.CalledProcessError, OSError, subprocess.TimeoutExpired, ValueError):
+        return
+    try:
+        if behind > 30:
+            subprocess.run(
+                ["git", "-C", str(solution_root), "fetch", "--depth", "1", "origin", "main"],
+                check=True, capture_output=True, timeout=60,
+            )
+            subprocess.run(
+                ["git", "-C", str(solution_root), "reset", "--hard", "FETCH_HEAD"],
+                check=True, capture_output=True, timeout=30,
+            )
+            return
+        # 落后不多：子模块默认 detached HEAD，先切到跟踪分支再 ff 拉取，避免丢弃本地改动
         subprocess.run(
             ["git", "-C", str(solution_root), "checkout", "main"],
             check=True, capture_output=True, timeout=30,
