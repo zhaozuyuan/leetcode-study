@@ -1,0 +1,4 @@
+interface:
+  display_name: "LeetCode Study"
+  short_description: "Pick, tutor, and review algorithm practice"
+  default_prompt: "Use $leetcode-study to find a valuable algorithm problem for me to practice."
