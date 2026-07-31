@@ -28,12 +28,69 @@ QUOTAS = {
 HEADING_LINK_RE = re.compile(r"^#\s+\[(?P<title>.+?)\]\(.+?\)\s*$")
 HEADING_TEXT_RE = re.compile(r"^#\s+(?P<title>.+?)\s*$")
 
+try:
+    from charset_normalizer import from_bytes as _detect_encoding
+except ImportError:
+    _detect_encoding = None
+
+# 读取文件时不再硬编码 UTF-8：严格 UTF-8 优先，其余候选按语言信号评分取最优，全部失败时 latin-1 无损兜底
+COMMON_CJK = set("的一是不了人我在有他这中大来上国个到说们为子和你地出道也时年得就那要下以生会自着去之过家学对可她里后小么心多天而能好都然没日于起还发成事只作当想看见面又手走开")
+# 谚文只按常用音节计分：真实韩文几乎全用常用音节，而乱码式随机音节（EUC-KR 误解码产物）基本不会命中
+COMMON_HANGUL = set("의이그는가나다라마바사아자차카타파하너더러머버서어저처커터허지기니리미비시히들을를에와과도로수합제목문해결답시간고있없않잘못")
+# 假名只在日文编码下计分：GB18030 产物也可能含假名（GB2312 的 A4/A5 区），一律加分会被误解码产物钻空子
+JAPANESE_ENCODINGS = frozenset({
+    "shift_jis", "cp932", "euc_jp", "euc_jis_2004", "iso2022_jp",
+    "iso2022_jp_1", "iso2022_jp_2", "iso2022_jp_3", "iso2022_jp_ext",
+})
+
+
+def _score_text(text: str, kana_bonus: int = 0) -> int:
+    hanzi = kana = hangul = 0
+    for ch in text:
+        if "぀" <= ch <= "ヿ":
+            kana += 1
+        elif "가" <= ch <= "힣":
+            if ch in COMMON_HANGUL:
+                hangul += 1
+        elif "一" <= ch <= "鿿":
+            hanzi += 1
+    return hanzi + 2 * sum(ch in COMMON_CJK for ch in text) + kana_bonus * kana + 3 * hangul
+
+
+def read_text_robust(path: Path) -> str:
+    raw = path.read_bytes()
+    # 1) 严格 UTF-8（含 BOM）优先，零误判
+    for enc in ("utf-8-sig", "utf-8"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    # 2) 各编码候选按语言信号评分取最优（GB18030 双字节范围与日文/繁体重叠，评分可避免互误判）
+    best_text, best_score = None, 0
+    for enc in ("gb18030", "big5", "shift_jis", "euc_kr", "euc_jp"):
+        try:
+            text = raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        score = _score_text(text, 3 if enc in JAPANESE_ENCODINGS else 0)
+        if score > best_score:
+            best_text, best_score = text, score
+    if _detect_encoding is not None:
+        for match in _detect_encoding(raw):
+            score = _score_text(str(match), 3 if match.encoding in JAPANESE_ENCODINGS else 0)
+            if score > best_score:
+                best_text, best_score = str(match), score
+    if best_text is not None:
+        return best_text
+    # 3) 全部失败：latin-1 无损兜底（不再静默丢字节）
+    return raw.decode("latin-1")
+
 
 def load_history(path: Path) -> Set[str]:
     if not path.exists():
         return set()
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(read_text_robust(path))
     except (json.JSONDecodeError, OSError):
         return set()
 
@@ -66,7 +123,7 @@ def read_primary_title(readme: Path) -> Optional[str]:
     if not readme.exists():
         return None
     try:
-        lines = readme.read_text(encoding="utf-8", errors="ignore").splitlines()
+        lines = read_text_robust(readme).splitlines()
     except OSError:
         return None
     for line in lines:
@@ -94,7 +151,7 @@ def read_difficulty(problem_dir: Path) -> Optional[str]:
         if not readme.exists():
             continue
         try:
-            text = readme.read_text(encoding="utf-8", errors="ignore")
+            text = read_text_robust(readme)
         except OSError:
             continue
         match = re.search(r"^difficulty:\s*(.+?)\s*$", text, re.MULTILINE | re.IGNORECASE)
