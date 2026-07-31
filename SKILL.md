@@ -11,7 +11,6 @@ description: 帮助用户基于本地题库学习 LeetCode 风格算法题。用
 - **除非用户主动询问算法思路，否则不要直接给出解题思路**
 - **除非用户主动提出修改代码，否则不要直接修改代码**
 - **用户每次要求检查代码时，都必须通过shell读取最新文件分析，不可再使用之前的结论**
-- 题目来源目录为：`~/Work/algorithm/leetcode/solution`
 - 所有需要持久化的技能状态都保存在：`~/.config/leetcode-study`
 - 练习历史统一保存在：`~/.config/leetcode-study/history.json`
 - 持久化文件由 `scripts/` 下的脚本读取、校验和写入；不要在文档中手动维护持久化文件格式说明。
